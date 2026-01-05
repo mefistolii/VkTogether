@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VK Together — Host Edition</title>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <style>
+        :root { --bg: #08080a; --card: #121214; --accent: #0077ff; --text: #f0f0f0; --success: #00ff88; --error: #ff3e3e; }
+        body { font-family: 'Inter', system-ui, sans-serif; background: var(--bg); color: var(--text); display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; overflow-x: hidden; }
+        
+        .card { background: var(--card); padding: 30px; border-radius: 28px; width: 100%; max-width: 950px; text-align: center; border: 1px solid #222; position: relative; box-shadow: 0 30px 60px rgba(0,0,0,0.6); }
+        
+        #player-wrapper { width: 100%; aspect-ratio: 16/9; background: #000; margin: 20px 0; border-radius: 20px; overflow: hidden; position: relative; border: 2px solid #333; transition: transform 0.1s; }
+        iframe { width: 100%; height: 100%; border: none; }
+        
+        .shake { animation: shake 0.4s; }
+        @keyframes shake { 0%, 100% { transform: translateX(0); } 25% { transform: translateX(-5px) rotate(-1deg); } 75% { transform: translateX(5px) rotate(1deg); } }
+
+        .status-bar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; }
+        .live-indicator { background: var(--error); color: white; padding: 4px 10px; border-radius: 6px; font-size: 11px; font-weight: 900; animation: blink 1.5s infinite; }
+        @keyframes blink { 50% { opacity: 0.5; } }
+        
+        .online-tag { font-size: 13px; color: #888; display: flex; align-items: center; gap: 5px; }
+
+        .reactions-bar { display: flex; justify-content: center; gap: 12px; margin: 20px 0; }
+        .emoji-btn { font-size: 26px; background: rgba(255,255,255,0.05); border: 1px solid #333; border-radius: 16px; width: 60px; height: 60px; cursor: pointer; transition: 0.2s; }
+        .emoji-btn:hover { background: var(--accent); transform: scale(1.1) translateY(-5px); border-color: var(--accent); }
+        
+        .floating-emoji { position: absolute; bottom: 10%; font-size: 45px; pointer-events: none; z-index: 100; animation: flyUp 2.5s forwards cubic-bezier(0.1, 0.8, 0.3, 1); }
+        @keyframes flyUp { 0% { transform: translateY(0) scale(0.5); opacity: 0; } 20% { opacity: 1; } 100% { transform: translateY(-400px) translateX(var(--side)); opacity: 0; } }
+
+        input { padding: 18px; border-radius: 14px; border: 1px solid #333; background: #1a1a1c; color: white; width: calc(100% - 38px); margin-bottom: 12px; font-size: 16px; }
+        .btn-start { background: var(--accent); color: white; padding: 18px; border-radius: 14px; border: none; font-weight: 800; cursor: pointer; width: 100%; text-transform: uppercase; }
+        
+        .code-display { font-size: 3.5rem; color: var(--success); font-weight: 900; letter-spacing: 10px; margin: 10px 0; }
+
+        /* Стиль для секретной ссылки хоста */
+        .host-invite-box { background: #1a1a1c; border: 1px dashed var(--accent); padding: 15px; border-radius: 12px; margin-top: 20px; }
+        .host-invite-box p { margin: 0 0 10px 0; font-size: 12px; color: var(--accent); font-weight: bold; text-transform: uppercase; }
+        .invite-url-input { background: #000 !important; border-color: #444 !important; color: var(--success) !important; cursor: pointer; font-family: monospace; font-size: 12px !important; }
+
+        .hidden { display: none !important; }
+        .overlay-play { position: absolute; top:0; left:0; width:100%; height:100%; background: rgba(0,0,0,0.95); z-index: 10; display: flex; align-items: center; justify-content: center; cursor: pointer; border-radius: 18px; }
+    </style>
+</head>
+<body>
+
+    <div class="card">
+        <div class="status-bar">
+            <div id="live-label" class="live-indicator hidden">LIVE</div>
+            <div id="online-info" class="online-tag hidden">👥 <span id="online-count">1</span> зритель</div>
+        </div>
+
+        <h1 id="main-title">VK <span style="color:var(--accent)">TOGETHER</span></h1>
+
+        <div id="setup-section">
+            <input type="text" id="join-room-code" placeholder="Введите код (4 цифры)">
+            <button class="btn-start" onclick="joinByCode()">Присоединиться</button>
+            <button style="background:none; color:#666; margin-top: 15px; border: none; cursor: pointer;" onclick="createRoom()">Создать свою комнату</button>
+        </div>
+
+        <div id="room-section" class="hidden">
+            <div class="code-display" id="display-room-code"></div>
+            
+            <div id="player-wrapper">
+                <div id="player-container"></div>
+                <div id="click-overlay" class="overlay-play" onclick="unlockPlayer()">
+                    <div style="text-align:center">
+                        <div style="font-size: 60px;">🍿</div>
+                        <p>Нажми для синхронизации</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="reactions-bar">
+                <button class="emoji-btn" onclick="sendReaction('😂')">😂</button>
+                <button class="emoji-btn" onclick="sendReaction('🔥')">🔥</button>
+                <button class="emoji-btn" onclick="sendReaction('😱')">😱</button>
+                <button class="emoji-btn" onclick="sendReaction('🤡')">🤡</button>
+                <button class="emoji-btn" onclick="sendReaction('❤️')">❤️</button>
+            </div>
+
+            <div id="host-controls" class="hidden">
+                <input type="text" id="video-url" placeholder="Вставьте ссылку на видео ВК...">
+                <button class="btn-start" onclick="startNewVideo()">ЗАПУСТИТЬ ТРАНСЛЯЦИЮ</button>
+                
+                <div class="host-invite-box">
+                    <p>Ссылка для друзей (нажми, чтобы скопировать):</p>
+                    <input type="text" id="invite-link-field" class="invite-url-input" readonly onclick="copyInviteLink()">
+                </div>
+            </div>
+        </div>
+    </div>
+
+<script>
+    const { createClient } = supabase;
+    const client = createClient('https://wkqcwndzarnufksjjimo.supabase.co', 'sb_publishable_FfXhtTGyGtojIRjz0J-oLA_bsllNNjW');
+
+    let currentRoomId = null;
+    let isHost = false;
+    let currentSeconds = 0;
+
+    window.unlockPlayer = () => document.getElementById('click-overlay').classList.add('hidden');
+
+    // Авто-вход по ссылке при загрузке
+    window.onload = async () => {
+        const urlParams = new URLSearchParams(window.location.search);
+        const roomFromUrl = urlParams.get('room');
+        if (roomFromUrl) {
+            document.getElementById('join-room-code').value = roomFromUrl;
+            setTimeout(() => joinByCode(), 1000);
+        }
+    };
+
+    // Функция копирования секретной ссылки
+    window.copyInviteLink = function() {
+        const linkInput = document.getElementById('invite-link-field');
+        linkInput.select();
+        document.execCommand("copy");
+        const originalVal = linkInput.value;
+        linkInput.value = "СКОПИРОВАНО!";
+        setTimeout(() => { linkInput.value = originalVal; }, 1500);
+    };
+
+    window.createRoom = async () => {
+        const code = Math.floor(1000 + Math.random() * 9000).toString();
+        const { data } = await client.from('rooms').insert([{ room_code: code, current_seconds: 0, online_count: 1 }]).select();
+        if (data) { isHost = true; initRoom(data[0]); }
+    };
+
+    window.joinByCode = async () => {
+        const code = document.getElementById('join-room-code').value;
+        const { data, error } = await client.from('rooms').select('*').eq('room_code', code).maybeSingle();
+        if (data) { 
+            isHost = false; 
+            await client.from('rooms').update({ online_count: (data.online_count || 1) + 1 }).eq('id', data.id);
+            initRoom(data); 
+        } else alert("Комната не найдена");
+    };
+
+    function initRoom(room) {
+        currentRoomId = room.id;
+        document.getElementById('setup-section').classList.add('hidden');
+        document.getElementById('main-title').classList.add('hidden');
+        document.getElementById('room-section').classList.remove('hidden');
+        document.getElementById('live-label').classList.remove('hidden');
+        document.getElementById('online-info').classList.remove('hidden');
+        document.getElementById('display-room-code').innerText = room.room_code;
+        
+        if (isHost) {
+            document.getElementById('host-controls').classList.remove('hidden');
+            // Генерируем ссылку для хоста
+            const baseUrl = window.location.origin + window.location.pathname;
+            document.getElementById('invite-link-field').value = `${baseUrl}?room=${room.room_code}`;
+            startHostTimer();
+        }
+
+        renderVK(room.current_video_url, room.current_seconds);
+
+        client.channel('sync').on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'rooms', filter: `id=eq.${currentRoomId}` }, 
+        payload => {
+            document.getElementById('online-count').innerText = payload.new.online_count;
+            if (!isHost) {
+                if (Math.abs(currentSeconds - payload.new.current_seconds) > 5) renderVK(payload.new.current_video_url, payload.new.current_seconds);
+                currentSeconds = payload.new.current_seconds;
+            }
+        }).subscribe();
+
+        client.channel('reactions').on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'reactions', filter: `room_id=eq.${currentRoomId}` }, 
+        payload => { showEmoji(payload.new.emoji); }).subscribe();
+    }
+
+    window.sendReaction = async (emoji) => {
+        await client.from('reactions').insert([{ room_id: currentRoomId, emoji: emoji }]);
+    };
+
+    function showEmoji(emoji) {
+        const wrapper = document.getElementById('player-wrapper');
+        const el = document.createElement('div');
+        el.className = 'floating-emoji';
+        el.innerText = emoji;
+        el.style.left = Math.random() * 80 + 10 + '%';
+        el.style.setProperty('--side', (Math.random() * 150 - 75) + 'px');
+        wrapper.appendChild(el);
+        if (emoji === '😱') {
+            wrapper.classList.add('shake');
+            setTimeout(() => wrapper.classList.remove('shake'), 400);
+        }
+        setTimeout(() => el.remove(), 2500);
+    }
+
+    function renderVK(url, seconds) {
+        if (!url) return;
+        const match = url.match(/video(-?\d+_\d+)/);
+        if (!match) return;
+        const embedUrl = `https://vkvideo.ru/video_ext.php?oid=${match[1].split('_')[0]}&id=${match[1].split('_')[1]}&autoplay=1&t=${Math.floor(seconds)}s`;
+        document.getElementById('player-container').innerHTML = `<iframe src="${embedUrl}" allow="autoplay; encrypted-media; fullscreen" allowfullscreen></iframe>`;
+        currentSeconds = seconds;
+    }
+
+    function startHostTimer() {
+        setInterval(async () => {
+            currentSeconds += 2;
+            await client.from('rooms').update({ current_seconds: currentSeconds }).eq('id', currentRoomId);
+        }, 2000);
+    }
+
+    window.startNewVideo = async () => {
+        const url = document.getElementById('video-url').value.trim();
+        if (!url) return;
+        currentSeconds = 0;
+        await client.from('rooms').update({ current_video_url: url, current_seconds: 0 }).eq('id', currentRoomId);
+        renderVK(url, 0);
+    };
+</script>
+</body>
+</html>
